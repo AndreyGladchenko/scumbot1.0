@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}SCUM Admin{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body id="body">
+
+    <h1>SCUM Admin Panel</h1>
+    <nav>
+        <a href="/">Home</a> |
+        <a href="/items">Shop Items</a> |
+        <a href="/players">Players</a> |
+        <button id="toggle-dark-mode" style="float: right;">🌓 Toggle Theme</button>
+    </nav>
+    <hr>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        <ul class="flashes">
+        {% for category, message in messages %}
+            <li class="{{ category }}">{{ message }}</li>
+        {% endfor %}
+        </ul>
+    {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+
+    <script>
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const savedTheme = localStorage.getItem('theme');
+
+        function applyTheme(theme) {
+            const body = document.getElementById("body");
+            if (theme === 'dark') {
+                body.classList.add("dark-mode");
+                localStorage.setItem("theme", "dark");
+            } else {
+                body.classList.remove("dark-mode");
+                localStorage.setItem("theme", "light");
+            }
+        }
+
+        function toggleDarkMode() {
+            const body = document.getElementById("body");
+            const isDark = body.classList.contains("dark-mode");
+            applyTheme(isDark ? "light" : "dark");
+        }
+
+        window.onload = function () {
+            if (savedTheme) {
+                applyTheme(savedTheme);
+            } else {
+                applyTheme(prefersDark ? "dark" : "light");
+            }
+
+            document.getElementById("toggle-dark-mode").addEventListener("click", toggleDarkMode);
+        };
+    </script>
+</body>
+</html>

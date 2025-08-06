@@ -1,0 +1,29 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>Order History for {{ discord_username }} ({{ discord_id }})</h2>
+
+{% if orders %}
+<table>
+  <tr>
+    <th>Item</th>
+    <th>Category</th>
+    <th>Price</th>
+    <th>Quantity</th>
+    <th>Ordered At</th>
+  </tr>
+  {% for order in orders %}
+  <tr>
+    <td>{{ order.item_name }}</td>
+    <td>{{ order.category }}</td>
+    <td>{{ order.price }}</td>
+    <td>{{ order.quantity }}</td>
+    <td>{{ order.timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>No orders found for this player.</p>
+{% endif %}
+
+<p><a href="{{ url_for('players') }}">Back to Players</a></p>
+{% endblock %}

@@ -1,0 +1,11 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>⚠️ Confirm Delete</h2>
+<p>The item <strong>{{ item.name }}</strong> has related orders.</p>
+<p>Do you want to delete all related orders and remove this item?</p>
+
+<form action="{{ url_for('force_delete_item', item_id=item.id) }}" method="POST">
+    <button type="submit">🗑️ Yes, delete item and orders</button>
+    <a href="{{ url_for('items') }}">Cancel</a>
+</form>
+{% endblock %}

@@ -1,0 +1,47 @@
+name: scumbot
+services:
+  discord-bot:
+    build: ./bot
+    ports:
+      - "3000:3000"  # Expose bot API on port 3000
+    volumes:
+      - ./bot:/app
+    env_file:
+      - .env
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./web:/app
+      - ./bot:/app/bot  # 👈 Mount bot folder so Flask can import it
+
+
+  db:
+    image: postgres:15
+    env_file:
+    - .env
+    volumes:
+    - postgres-data:/var/lib/postgresql/data
+    ports:
+    - "5433:5432"  # Change if you need to expose it to host
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres-data:

@@ -1,0 +1,10 @@
+{% extends "layout.html" %}
+{% block content %}
+  <h2>⚠️ Delete Player Confirmation</h2>
+  <p>This player has existing orders. Are you sure you want to delete them and all their orders?</p>
+  
+  <form action="{{ url_for('force_delete_player', discord_id=discord_id) }}" method="POST">
+    <button type="submit">✅ Yes, delete player and orders</button>
+    <a href="{{ url_for('players') }}">❌ Cancel</a>
+  </form>
+{% endblock %}

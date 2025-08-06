@@ -1,0 +1,12 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>Add New Player</h2>
+<form method="POST">
+  <label>Discord ID:</label><br>
+  <input type="text" name="discord_id" required><br><br>
+  <label>SCUM Username:</label><br>
+  <input type="text" name="scum_username" required><br><br>
+  <button type="submit">Add Player</button>
+  <a href="{{ url_for('players') }}">Cancel</a>
+</form>
+{% endblock %}

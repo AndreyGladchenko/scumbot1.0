@@ -1,0 +1,41 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h2>Add New Item</h2>
+
+<form method="POST">
+  <div>
+    <label for="name">Name:</label><br>
+    <input type="text" id="name" name="name" required>
+  </div>
+
+  <div>
+    <label for="category">Category:</label><br>
+    <input type="text" id="category" name="category" required>
+  </div>
+
+  <div>
+    <label for="price">Price:</label><br>
+    <input type="number" id="price" name="price" step="1" min="0" required>
+  </div>
+  <div>
+    <label for="description">Description:</label><br>
+    <textarea id="description" name="description">{{ item.description if item else '' }}</textarea>
+  </div>
+
+  <div>
+    <label for="content">Spawn Commands (one per line):</label><br>
+    <textarea id="content" name="content">{% if item and item.content %}{{ item.content | join('\n') }}{% endif %}</textarea>
+  </div>
+
+  <div>
+    <label for="image_url">Image URL:</label><br>
+    <input type="url" id="image_url" name="image_url">
+  </div>
+
+  <div style="margin-top: 20px;">
+    <button type="submit">Add Item</button>
+    <a href="{{ url_for('items') }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

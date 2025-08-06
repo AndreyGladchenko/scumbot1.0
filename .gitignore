@@ -1,0 +1,26 @@
+# Python
+*.pyc
+__pycache__/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Docker
+*.pid
+*.log
+docker-compose.override.yml
+postgres-data/
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# VS Code
+.vscode/
+
+# Mac and Linux cruft
+.DS_Store
+*.swp

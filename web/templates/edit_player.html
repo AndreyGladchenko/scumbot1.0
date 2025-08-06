@@ -1,0 +1,21 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>Edit Player</h2>
+
+<form method="POST">
+  <div>
+    <label for="scum_username">SCUM Name:</label><br>
+    <input type="text" id="scum_username" name="scum_username" value="{{ player.scum_username }}" required>
+  </div>
+
+  <div>
+    <label for="balance">Balance:</label><br>
+    <input type="number" id="balance" name="balance" value="{{ player.balance }}" required>
+  </div>
+
+  <div style="margin-top: 20px;">
+    <button type="submit">Update Player</button>
+    <a href="{{ url_for('players') }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

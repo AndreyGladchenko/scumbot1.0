@@ -6,9 +6,18 @@ import db
 class BankView(View):
     def __init__(self, bot):
         super().__init__(timeout=None)
+        self.add_item(RegisterButton(bot))
         self.add_item(BalanceButton(bot))
         self.add_item(TransferButton(bot))
         self.add_item(PurchaseHistoryButton(bot))
+
+class RegisterButton(Button):
+    def __init__(self, bot):
+        super().__init__(label="📝 Register", style=ButtonStyle.primary, custom_id="register_scum")
+        self.bot = bot
+
+    async def callback(self, interaction: Interaction):
+        await interaction.response.send_modal(RegisterModal(self.bot, interaction.user.id, interaction.user.name))
 
 class BalanceButton(Button):
     def __init__(self, bot):
@@ -67,12 +76,38 @@ class PurchaseHistoryButton(Button):
 
     async def callback(self, interaction: Interaction):
         orders = db.get_order_history_by_discord_id(interaction.user.id)
+
         if not orders:
             await interaction.response.send_message("📭 No purchases found.", ephemeral=True)
             return
 
-        history = "\n".join(
-            f"{o['item_name']} x{o['quantity']} — {o['created_at'].strftime('%Y-%m-%d')}"
-            for o in orders
+        history_lines = []
+        for order in orders:
+            item_name = order['item_name']
+            quantity = order['quantity']
+            date = order['created_at'].strftime('%Y-%m-%d')
+            history_lines.append(f"{item_name} x{quantity} — {date}")
+
+        history_text = "\n".join(history_lines)
+
+        await interaction.response.send_message(
+            f"🧾 **Your Purchase History**:\n```\n{history_text}\n```",
+            ephemeral=True
         )
-        await interaction.response.send_message(f"🧾 **Your Purchase History**:\n```\n{history}\n```", ephemeral=True)
+
+
+ # ─── REGISTER MODAL ───────────────────────────────────────────
+class RegisterModal(Modal, title="Register Your SCUM Name"):
+    def __init__(self, bot, user_id, username):
+        super().__init__()
+        self.bot = bot
+        self.user_id = user_id
+        self.username = username
+
+        self.add_item(TextInput(label="SCUM In-Game Name", placeholder="e.g. MadMax123", required=True))
+
+    async def on_submit(self, interaction: Interaction):
+        scum_name = self.children[0].value.strip()
+        db.get_or_create_player(self.user_id, scum_name, self.username)
+        await interaction.response.send_message(f"✅ Registered as `{scum_name}`.", ephemeral=True)
+       

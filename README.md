@@ -205,3 +205,21 @@ Made with ☕ by [@NARobz](https://github.com/NARobz/scumbot1.0)
 - Balance top-ups via discord 
 - Item usage tracking  
 - Permission roles for staff
+
+
+## New Features (Aug 2025)
+
+- **Register Button in Bank UI**  
+  Players can now link their SCUM in-game name with their Discord account directly from the bank channel using a button.  
+  A modal will appear to enter the SCUM name, which uses the existing `/register` logic in the admin web portal.
+
+- **Purchase History Button**  
+  Players can now view their last 10 purchases directly in Discord via the bank UI.  
+  Each entry shows the item name, quantity, and purchase date.  
+  The `orders` table now stores a `created_at` timestamp for all new orders.
+
+### Database Update
+Ensure the `orders` table has a `created_at` column:
+```sql
+ALTER TABLE orders
+ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;

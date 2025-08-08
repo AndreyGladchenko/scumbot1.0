@@ -127,6 +127,38 @@ def update_player(discord_id, scum_username, balance):
             """, (scum_username, balance, discord_id))
             conn.commit()
 
+# bank view helper functions
+def get_balance_by_discord_id(discord_id):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT balance FROM players WHERE discord_id = %s", (discord_id,))
+            result = cur.fetchone()
+            return result[0] if result else 0
+
+def update_balance_by_discord_id(discord_id, amount):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE players SET balance = balance + %s WHERE discord_id = %s", (amount, discord_id,))
+
+def get_order_history_by_discord_id(discord_id):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT i.name, o.quantity, o.created_at
+                FROM orders o
+                JOIN players p ON o.player_id = p.id
+                JOIN shop_items i ON o.item_id = i.id
+                WHERE p.discord_id = %s
+                ORDER BY o.created_at DESC
+                LIMIT 10
+            """, (discord_id,))
+            return [
+                {"item_name": row[0], "quantity": row[1], "created_at": row[2]}
+                for row in cur.fetchall()
+            ]
+
+
+
 import json
 
 def get_shop_items():

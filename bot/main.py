@@ -1,7 +1,5 @@
 # main.py – SCUM Bot for Discord Shop System
 
-# main.py - Discord bot and Flask API in one process
-
 import os
 import time
 import discord
@@ -12,6 +10,7 @@ from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 import threading
 import db
+from bank_view import BankView
 
 load_dotenv()
 
@@ -24,6 +23,7 @@ COMMAND_RELAY_FILE = os.getenv("COMMAND_RELAY_FILE", "outgoing_commands.txt")
 ADMIN_ROLE_NAME = os.getenv("ADMIN_ROLE_NAME", "Admin")
 COOLDOWN_SECONDS = 60
 GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))
+BANK_CHANNEL_ID = int(os.getenv("BANK_CHANNEL_ID"))
 
 # ─── GLOBALS ─────────────────────────────────────────────────
 cooldowns = {}
@@ -44,7 +44,6 @@ class BuyButton(Button):
         self.bot = bot
         self.item_name = item_name
 
-
     async def callback(self, interaction: Interaction):
         cog = self.bot.get_cog("ScumBot")
         if cog:
@@ -54,6 +53,9 @@ class BuyButton(Button):
 class ScumBot(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.bot.tree.add_command(self.send_bank_buttons, guild=discord.Object(id=GUILD_ID)) # Register bank buttons command for the specific guild
+        # Register slash commands manually with the bot's app command tree
+        #self.bot.tree.add_command(self.send_bank_buttons)
 
     async def log_command(self, interaction, message):
         if LOG_CHANNEL_ID:
@@ -110,7 +112,7 @@ class ScumBot(commands.Cog):
 
         await interaction.response.send_message(
             f"✅ You purchased {item['name']} for {total_cost}. Delivery in progress...", ephemeral=True
-    )
+        )
 
     async def send_spawn_command_to_discord(self, commands: list, scum_username: str):
         channel = self.bot.get_channel(PURCHASE_LOG_CHANNEL_ID)
@@ -118,7 +120,6 @@ class ScumBot(commands.Cog):
             print("❌ Could not find delivery channel.")
             return
 
-        # Build spawn commands for delivery
         messages = []
         for command in commands:
             parts = command.split()
@@ -126,12 +127,9 @@ class ScumBot(commands.Cog):
                 spawn_line = f"#SpawnItem {parts[1]} {scum_username}"
                 messages.append(spawn_line)
 
-        # Send formatted block
         if messages:
             await channel.send(f"📦 New Delivery:\n```{chr(10).join(messages)}```")
 
-
-    # 🛒 POST shop item to correct channel
     async def post_shop_item(self, item):
         channel = self.bot.get_channel(SHOP_LOG_CHANNEL_ID)
         if not channel:
@@ -155,7 +153,6 @@ class ScumBot(commands.Cog):
         message = await channel.send(embed=embed, view=view)
         db.update_shop_item_message_info(item["id"], str(message.id), str(channel.id))
 
-    # 🧾 Slash Commands
     @app_commands.command(name="register", description="Register your SCUM username")
     async def register(self, interaction: Interaction, scum_username: str):
         db.get_or_create_player(interaction.user.id, scum_username, interaction.user.name)
@@ -165,7 +162,6 @@ class ScumBot(commands.Cog):
     @app_commands.command(name="buy", description="Buy an item from the shop")
     @app_commands.describe(item_name="The exact name of the item")
     async def buy(self, interaction: discord.Interaction, item_name: str, quantity: int = 1):
-
         if quantity < 1:
             await interaction.response.send_message("❌ Quantity must be at least 1.", ephemeral=True)
             return
@@ -186,7 +182,6 @@ class ScumBot(commands.Cog):
             return
 
         db.update_balance(player_id, -total)
-        # self.queue_spawn_command(item["name"], interaction.user.display_name, quantity)
         db.save_order_to_db(player_id, item["id"], quantity)
         self.set_cooldown(interaction.user.id)
 
@@ -195,7 +190,6 @@ class ScumBot(commands.Cog):
             ephemeral=True
         )
 
-        # 📦 Log to bot-shop-delivery
         delivery_channel = self.bot.get_channel(PURCHASE_LOG_CHANNEL_ID)
         if delivery_channel:
             await delivery_channel.send(
@@ -214,18 +208,45 @@ class ScumBot(commands.Cog):
 
         await interaction.response.send_message("✅ Posted all items.", ephemeral=True)
 
+    @app_commands.command(name="send_bank_buttons", description="Post bank UI with balance, transfer, and history")
+    async def send_bank_buttons(self, interaction: discord.Interaction):
+        if not await self.is_admin(interaction):
+            await interaction.response.send_message("❌ Admin only.", ephemeral=True)
+            return
+
+        print("🧪 Creating BankView...")
+        channel = self.bot.get_channel(BANK_CHANNEL_ID)
+        if channel:
+            await channel.send("🏦 **Bank Actions:**", view=BankView(self.bot))
+            await interaction.response.send_message("✅ Posted bank buttons.", ephemeral=True)
+        print("✅ Sent bank message")
+
+
 # ─── BOT SETUP ───────────────────────────────────────────────
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
+    print("🔧 on_ready started")
     db.init()
+    print("✅ DB initialized")
+
     await bot.add_cog(ScumBot(bot))
-    guild = discord.Object(id=GUILD_ID)  
-    bot.tree.clear_commands(guild=guild)
-    await bot.tree.sync(guild=guild)
+    print("✅ Cog added")
+
+    try:
+        guild = discord.Object(id=GUILD_ID)
+        #bot.tree.clear_commands(guild=guild)  # no await here
+        print("🔄 Cleared guild commands")
+
+        await bot.tree.sync(guild=guild)
+        print("✅ Commands synced")
+    except Exception as e:
+        print(f"❌ Error syncing commands: {e}")
+
     print("✅ Bot is ready.")
+
 
 # ─── FLASK APP (Internal API for Admin Portal) ──────────────
 flask_app = Flask(__name__)
@@ -236,16 +257,15 @@ def api_post_item():
     if not data:
         return jsonify({"error": "No JSON provided"}), 400
 
-    print("📨 Received /api/post_item:", data)  # 👈 Optional debug
+    print("📨 Received /api/post_item:", data)
     bot.loop.create_task(bot.get_cog("ScumBot").post_shop_item(data))
     return jsonify({"status": "posted"}), 200
 
 def run_flask():
-    print("🌐 Starting internal Flask API on port 3000")  # 👈 Important
+    print("🌐 Starting internal Flask API on port 3000")
     flask_app.run(host='0.0.0.0', port=3000)
 
 # ─── RUN ─────────────────────────────────────────────────────
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
     bot.run(DISCORD_TOKEN)
-

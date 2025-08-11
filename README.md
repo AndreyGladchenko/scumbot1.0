@@ -219,7 +219,33 @@ Made with ☕ by [@NARobz](https://github.com/NARobz/scumbot1.0)
   The `orders` table now stores a `created_at` timestamp for all new orders.
 
 ### Database Update
-Ensure the `orders` table has a `created_at` column:
-```sql
-ALTER TABLE orders
-ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+  Ensure the `orders` table has a `created_at` column:
+  ```sql
+  ALTER TABLE orders
+  ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+
+  🚀 Recent Updates
+  Bot Status Updates
+  The bot now posts its online/offline status to the channel specified by BOT_STATUS_CHANNEL_ID in your .env file.
+
+  Instead of posting a new message each time, it edits the last bot status message to avoid clutter.
+
+  Auto-Refresh Shop & Bank on Startup
+  If AUTO_REFRESH_ON_STARTUP=true in .env, the bot will automatically:
+
+  Purge non-pinned messages from bot-shop and bot-bank channels.
+
+  Repost all shop items from the database.
+
+  Re-add the bank action buttons.
+
+  This ensures the shop and bank channels are always clean and up to date after restarts.
+
+  Improved Delivery Logs
+  Purchases now log to the delivery channel (BOT_SHOP_DELIVERY_CHANNEL_ID) with clean, copy-paste-ready spawn commands.
+
+  Future-proofed for possible teleport + spawn bot automation.
+
+  .env Variables for New Features
+    BOT_STATUS_CHANNEL_ID=123456789012345678
+    AUTO_REFRESH_ON_STARTUP=true

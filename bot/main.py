@@ -3,6 +3,7 @@
 import os
 import time
 import discord
+import json
 from discord import app_commands, Interaction, ButtonStyle
 from discord.ext import commands
 from discord.ui import Button, View
@@ -11,6 +12,11 @@ from flask import Flask, request, jsonify
 import threading
 import db
 from bank_view import BankView
+
+
+
+print("💡 main.py starting up...")
+
 
 load_dotenv()
 
@@ -24,6 +30,8 @@ ADMIN_ROLE_NAME = os.getenv("ADMIN_ROLE_NAME", "Admin")
 COOLDOWN_SECONDS = 60
 GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))
 BANK_CHANNEL_ID = int(os.getenv("BANK_CHANNEL_ID"))
+BOT_STATUS_CHANNEL_ID = int(os.getenv("BOT_STATUS_CHANNEL_ID"))
+last_status_message_id = None  # store the message ID so we can edit it later
 
 # ─── GLOBALS ─────────────────────────────────────────────────
 cooldowns = {}
@@ -100,35 +108,116 @@ class ScumBot(commands.Cog):
             )
             return
 
-        # Deduct balance & log order
+        # Deduct and save order
         db.update_balance(player_id, -total_cost)
-        db.save_order_to_db(player_id, item["id"], quantity)
+        order_id = db.save_order_to_db(player_id, item["id"], quantity)  # keep ID for future tracking
 
-        # Get player's SCUM name for spawn delivery
+        # Get SCUM username
         player = db.get_player_by_discord_id(interaction.user.id)
-        scum_username = player.get("scum_username", interaction.user.name)  # fallback to Discord name
+        scum_username = player.get("scum_username", interaction.user.name)
 
-        await self.send_spawn_command_to_discord(item["content"], scum_username)
+        # ✅ Parse content into a list of spawn commands
+        commands = item["content"]
+        if isinstance(commands, str):
+            try:
+                commands = json.loads(commands)  # parse JSON string to list
+            except json.JSONDecodeError:
+                commands = [commands]  # fallback to single string
+        elif not isinstance(commands, list):
+            commands = [str(commands)]
+
+        # 🛠 Build the commands (easy to change format later)
+        #spawn_commands = "\n".join([f"#spawnitem {cmd.split()[-1]} {scum_username}" for cmd in commands])
+        spawn_commands = "\n".join([f"#teleportto {scum_username} #spawnitem {cmd.split()[-1]}" for cmd in commands])
+
+        # Post delivery log
+        delivery_channel = self.bot.get_channel(1398829991466242179)  # bot-shop-delivery
+        if delivery_channel:
+            delivery_msg = (
+                f"📦 **New Delivery**\n"
+                f"🧍 Player: **{scum_username}**\n"
+                f"📦 Item: **{item['name']}**\n"
+                f"💰 Price: {format_price(item['price'])}\n"
+                f"🔢 Quantity: {quantity}\n"
+                f"🕒 Time: {discord.utils.format_dt(discord.utils.utcnow(), style='f')}\n"
+                f"```{spawn_commands}```"
+            )
+            await delivery_channel.send(delivery_msg)
 
         await interaction.response.send_message(
             f"✅ You purchased {item['name']} for {total_cost}. Delivery in progress...", ephemeral=True
         )
 
-    async def send_spawn_command_to_discord(self, commands: list, scum_username: str):
+    async def send_spawn_command_to_discord(self, commands, scum_username: str):
+        """
+        Robustly accept commands as:
+        - a Python list of strings
+        - a JSON string (e.g. '["#spawnitem Weapon_A 1"]')
+        - a single string (e.g. "#spawnitem Weapon_A 1")
+        and send properly formatted spawn lines to the PURCHASE_LOG_CHANNEL_ID.
+        """
         channel = self.bot.get_channel(PURCHASE_LOG_CHANNEL_ID)
         if not channel:
             print("❌ Could not find delivery channel.")
             return
 
-        messages = []
-        for command in commands:
-            parts = command.split()
-            if len(parts) >= 2:
-                spawn_line = f"#SpawnItem {parts[1]} {scum_username}"
-                messages.append(spawn_line)
+        # --- Normalize commands into a list of strings ---
+        commands_list = []
 
+        # If it's JSON text, try to parse it
+        if isinstance(commands, str):
+            try:
+                parsed = json.loads(commands)
+                # parsed might be a list, a dict, or a single string
+                if isinstance(parsed, list):
+                    commands_list = [str(x) for x in parsed]
+                elif isinstance(parsed, dict):
+                    # handle common patterns: maybe {"Contents": [...] } or {"content": [...]}
+                    if "Contents" in parsed and isinstance(parsed["Contents"], list):
+                        commands_list = [str(x) for x in parsed["Contents"]]
+                    elif "content" in parsed and isinstance(parsed["content"], list):
+                        commands_list = [str(x) for x in parsed["content"]]
+                    else:
+                        commands_list = [json.dumps(parsed)]
+                else:
+                    commands_list = [str(parsed)]
+            except json.JSONDecodeError:
+                # plain string (not JSON)
+                commands_list = [commands]
+        elif isinstance(commands, (list, tuple, set)):
+            commands_list = [str(x) for x in commands]
+        else:
+            # fallback: turn whatever it is into a single string
+            commands_list = [str(commands)]
+
+        # --- Parse each command string and build proper spawn lines ---
+        messages = []
+        for cmd in commands_list:
+            cmd = cmd.strip()
+            if not cmd:
+                continue
+
+            tokens = cmd.split()
+            # If the command already starts with '#spawnitem' (or 'spawnitem')
+            if len(tokens) >= 2 and tokens[0].lstrip('#').lower() == "spawnitem":
+                item_token = tokens[1]
+                # preserve quantity if present (last token numeric)
+                qty_suffix = ""
+                if len(tokens) >= 3 and tokens[-1].isdigit():
+                    qty_suffix = f" {tokens[-1]}"
+                spawn_line = f"#spawnitem {item_token}{qty_suffix} {scum_username}"
+                messages.append(spawn_line)
+            else:
+                # Fallback: try to take the first token as the item name
+                # (this handles if the DB stored just "Weapon_A" or similar)
+                first = tokens[0] if tokens else cmd
+                messages.append(f"#spawnitem {first} {scum_username}")
+
+        # --- Send as a single code block with one command per line ---
         if messages:
-            await channel.send(f"📦 New Delivery:\n```{chr(10).join(messages)}```")
+            text_block = "\n".join(messages)
+            await channel.send(f"📦 New Delivery:\n```{text_block}```")
+ 
 
     async def post_shop_item(self, item):
         channel = self.bot.get_channel(SHOP_LOG_CHANNEL_ID)
@@ -222,32 +311,6 @@ class ScumBot(commands.Cog):
         print("✅ Sent bank message")
 
 
-# ─── BOT SETUP ───────────────────────────────────────────────
-intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-@bot.event
-async def on_ready():
-    print("🔧 on_ready started")
-    db.init()
-    print("✅ DB initialized")
-
-    await bot.add_cog(ScumBot(bot))
-    print("✅ Cog added")
-
-    try:
-        guild = discord.Object(id=GUILD_ID)
-        #bot.tree.clear_commands(guild=guild)  # no await here
-        print("🔄 Cleared guild commands")
-
-        await bot.tree.sync(guild=guild)
-        print("✅ Commands synced")
-    except Exception as e:
-        print(f"❌ Error syncing commands: {e}")
-
-    print("✅ Bot is ready.")
-
-
 # ─── FLASK APP (Internal API for Admin Portal) ──────────────
 flask_app = Flask(__name__)
 
@@ -265,7 +328,80 @@ def run_flask():
     print("🌐 Starting internal Flask API on port 3000")
     flask_app.run(host='0.0.0.0', port=3000)
 
-# ─── RUN ─────────────────────────────────────────────────────
+# ─── BOT SETUP ───────────────────────────────────────────────
+intents = discord.Intents.default()
+bot = commands.Bot(command_prefix="!", intents=intents)
+print(f"💡 Bot object created: {bot}")
+
+@bot.event
+async def on_ready():
+    print("🔧 on_ready started")
+    db.init()
+    print("✅ DB initialized")
+
+    await bot.add_cog(ScumBot(bot))
+    print("✅ Cog added")
+
+    try:
+        guild = discord.Object(id=GUILD_ID)
+        await bot.tree.sync(guild=guild)
+        print("✅ Commands synced")
+    except Exception as e:
+        print(f"❌ Error syncing commands: {e}")
+
+    # BOT STATUS MESSAGE
+    try:
+        status_channel = await bot.fetch_channel(BOT_STATUS_CHANNEL_ID)
+        status_text = f"✅ **Bot is online** — Ready at {discord.utils.format_dt(discord.utils.utcnow(), style='F')}"
+        last_bot_message = None
+        async for msg in status_channel.history(limit=10):
+            if msg.author.id == bot.user.id:
+                last_bot_message = msg
+                break
+        if last_bot_message:
+            await last_bot_message.edit(content=status_text)
+            print(f"✅ Updated existing status message: {last_bot_message.id}")
+        else:
+            sent_msg = await status_channel.send(status_text)
+            print(f"✅ Created new status message: {sent_msg.id}")
+    except Exception as e:
+        print(f"❌ Failed to send bot status: {e}")
+
+    # AUTO REFRESH SHOP & BANK
+    auto_refresh = os.getenv("AUTO_REFRESH_ON_STARTUP", "false").lower() == "true"
+    if auto_refresh:
+        print("♻️ Auto-refresh enabled — clearing and repopulating channels")
+        scum_cog = bot.get_cog("ScumBot")
+
+        async def purge_without_pins(channel):
+            def check(msg):
+                return not msg.pinned
+            await channel.purge(limit=None, check=check)
+
+        shop_channel = bot.get_channel(SHOP_LOG_CHANNEL_ID)
+        if shop_channel:
+            await purge_without_pins(shop_channel)
+            items = db.get_shop_items()
+            for item in items:
+                await scum_cog.post_shop_item(item)
+            print("✅ Shop items refreshed")
+
+        bank_channel = bot.get_channel(BANK_CHANNEL_ID)
+        if bank_channel:
+            await purge_without_pins(bank_channel)
+            await bank_channel.send("🏦 **Bank Actions:**", view=BankView(bot))
+            print("✅ Bank buttons refreshed")
+
+    # Start Flask in background
+    threading.Thread(target=run_flask, daemon=True).start()
+
+    print("✅ Bot is ready.")
+
+# ─── RUN BOT ─────────────────────────────────────────────────
 if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()
+    print("💡 main.py starting up...")
     bot.run(DISCORD_TOKEN)
+
+
+
+

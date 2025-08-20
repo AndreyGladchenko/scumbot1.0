@@ -14,9 +14,7 @@ import db
 from bank_view import BankView
 
 
-
 print("💡 main.py starting up...")
-
 
 load_dotenv()
 
@@ -40,6 +38,40 @@ cooldowns = {}
 def format_price(price):
     return str(int(float(price)))
 
+# ─── PROCESS ITEM CONTENT ────────────────────────────────────
+def process_item_content(content, player_name):
+    """
+    Parses the 'content' field from the DB and returns a list of SCUM commands.
+    Supports:
+    - JSON list: '["#teleportto {player}", "#spawnitem Weapon_A 1"]'
+    - Plain multi-line text
+    - Single string
+    Replaces {player} with the SCUM username.
+    """
+    commands = []
+
+    if not content:
+        return commands
+
+    # Try JSON first
+    if isinstance(content, str):
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, list):
+                commands = parsed
+            else:
+                commands = [str(parsed)]
+        except json.JSONDecodeError:
+            # Not JSON → treat as plain text lines
+            commands = [line.strip() for line in content.splitlines() if line.strip()]
+    elif isinstance(content, list):
+        commands = content
+    else:
+        commands = [str(content)]
+
+    # Replace placeholder with actual player name
+    return [cmd.replace("{player}", player_name) for cmd in commands]
+
 # ─── DISCORD VIEW FOR BUTTON ────────────────────────────────
 class ShopItemView(View):
     def __init__(self, bot, item_name):
@@ -62,8 +94,6 @@ class ScumBot(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.bot.tree.add_command(self.send_bank_buttons, guild=discord.Object(id=GUILD_ID)) # Register bank buttons command for the specific guild
-        # Register slash commands manually with the bot's app command tree
-        #self.bot.tree.add_command(self.send_bank_buttons)
 
     async def log_command(self, interaction, message):
         if LOG_CHANNEL_ID:
@@ -116,19 +146,11 @@ class ScumBot(commands.Cog):
         player = db.get_player_by_discord_id(interaction.user.id)
         scum_username = player.get("scum_username", interaction.user.name)
 
-        # ✅ Parse content into a list of spawn commands
-        commands = item["content"]
-        if isinstance(commands, str):
-            try:
-                commands = json.loads(commands)  # parse JSON string to list
-            except json.JSONDecodeError:
-                commands = [commands]  # fallback to single string
-        elif not isinstance(commands, list):
-            commands = [str(commands)]
+        # ✅ Use unified content processor
+        commands = process_item_content(item["content"], scum_username)
 
-        # 🛠 Build the commands (easy to change format later)
-        #spawn_commands = "\n".join([f"#spawnitem {cmd.split()[-1]} {scum_username}" for cmd in commands])
-        spawn_commands = "\n".join([f"#teleportto {scum_username} #spawnitem {cmd.split()[-1]}" for cmd in commands])
+        # 🛠 Build the spawn command block for display/logging
+        spawn_commands = "\n".join(commands)
 
         # Post delivery log
         delivery_channel = self.bot.get_channel(1398829991466242179)  # bot-shop-delivery
@@ -150,74 +172,18 @@ class ScumBot(commands.Cog):
 
     async def send_spawn_command_to_discord(self, commands, scum_username: str):
         """
-        Robustly accept commands as:
-        - a Python list of strings
-        - a JSON string (e.g. '["#spawnitem Weapon_A 1"]')
-        - a single string (e.g. "#spawnitem Weapon_A 1")
-        and send properly formatted spawn lines to the PURCHASE_LOG_CHANNEL_ID.
+        Uses process_item_content() to normalize commands and sends them to the delivery channel.
         """
         channel = self.bot.get_channel(PURCHASE_LOG_CHANNEL_ID)
         if not channel:
             print("❌ Could not find delivery channel.")
             return
 
-        # --- Normalize commands into a list of strings ---
-        commands_list = []
+        commands_list = process_item_content(commands, scum_username)
 
-        # If it's JSON text, try to parse it
-        if isinstance(commands, str):
-            try:
-                parsed = json.loads(commands)
-                # parsed might be a list, a dict, or a single string
-                if isinstance(parsed, list):
-                    commands_list = [str(x) for x in parsed]
-                elif isinstance(parsed, dict):
-                    # handle common patterns: maybe {"Contents": [...] } or {"content": [...]}
-                    if "Contents" in parsed and isinstance(parsed["Contents"], list):
-                        commands_list = [str(x) for x in parsed["Contents"]]
-                    elif "content" in parsed and isinstance(parsed["content"], list):
-                        commands_list = [str(x) for x in parsed["content"]]
-                    else:
-                        commands_list = [json.dumps(parsed)]
-                else:
-                    commands_list = [str(parsed)]
-            except json.JSONDecodeError:
-                # plain string (not JSON)
-                commands_list = [commands]
-        elif isinstance(commands, (list, tuple, set)):
-            commands_list = [str(x) for x in commands]
-        else:
-            # fallback: turn whatever it is into a single string
-            commands_list = [str(commands)]
-
-        # --- Parse each command string and build proper spawn lines ---
-        messages = []
-        for cmd in commands_list:
-            cmd = cmd.strip()
-            if not cmd:
-                continue
-
-            tokens = cmd.split()
-            # If the command already starts with '#spawnitem' (or 'spawnitem')
-            if len(tokens) >= 2 and tokens[0].lstrip('#').lower() == "spawnitem":
-                item_token = tokens[1]
-                # preserve quantity if present (last token numeric)
-                qty_suffix = ""
-                if len(tokens) >= 3 and tokens[-1].isdigit():
-                    qty_suffix = f" {tokens[-1]}"
-                spawn_line = f"#spawnitem {item_token}{qty_suffix} {scum_username}"
-                messages.append(spawn_line)
-            else:
-                # Fallback: try to take the first token as the item name
-                # (this handles if the DB stored just "Weapon_A" or similar)
-                first = tokens[0] if tokens else cmd
-                messages.append(f"#spawnitem {first} {scum_username}")
-
-        # --- Send as a single code block with one command per line ---
-        if messages:
-            text_block = "\n".join(messages)
+        if commands_list:
+            text_block = "\n".join(commands_list)
             await channel.send(f"📦 New Delivery:\n```{text_block}```")
- 
 
     async def post_shop_item(self, item):
         channel = self.bot.get_channel(SHOP_LOG_CHANNEL_ID)
@@ -236,7 +202,7 @@ class ScumBot(commands.Cog):
         if item.get("image_url"):
             embed.set_image(url=item["image_url"])
         if item.get("content"):
-            embed.add_field(name="Spawn Commands", value="\n".join(item["content"]), inline=False)
+            embed.add_field(name="Spawn Commands", value="\n".join(process_item_content(item["content"], "{player}")), inline=False)
 
         view = ShopItemView(self.bot, item["name"])
         message = await channel.send(embed=embed, view=view)
@@ -401,7 +367,3 @@ async def on_ready():
 if __name__ == "__main__":
     print("💡 main.py starting up...")
     bot.run(DISCORD_TOKEN)
-
-
-
-

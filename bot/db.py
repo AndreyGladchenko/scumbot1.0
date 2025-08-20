@@ -18,14 +18,19 @@ def get_connection():
 def init():
     with get_connection() as conn:
         with conn.cursor() as cur:
+            # ─── Players table ───────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS players (
                     id SERIAL PRIMARY KEY,
                     discord_id BIGINT UNIQUE NOT NULL,
                     scum_username TEXT,
                     balance INTEGER DEFAULT 0
-                )
+                );
             """)
+            # Extra columns
+            cur.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS discord_username TEXT;")
+
+            # ─── Shop Items table ────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS shop_items (
                     id SERIAL PRIMARY KEY,
@@ -33,10 +38,48 @@ def init():
                     category TEXT,
                     price NUMERIC NOT NULL,
                     image_url TEXT
-                )
+                );
+            """)
+            cur.execute("ALTER TABLE shop_items ADD COLUMN IF NOT EXISTS description TEXT;")
+            cur.execute("ALTER TABLE shop_items ADD COLUMN IF NOT EXISTS content TEXT;")
+            cur.execute("ALTER TABLE shop_items ADD COLUMN IF NOT EXISTS message_id TEXT;")
+            cur.execute("ALTER TABLE shop_items ADD COLUMN IF NOT EXISTS channel_id TEXT;")
+
+            # ─── Orders table ────────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS orders (
+                    id SERIAL PRIMARY KEY,
+                    player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+                    item_id INTEGER NOT NULL REFERENCES shop_items(id) ON DELETE CASCADE,
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    total_price NUMERIC NOT NULL,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            # ─── Audit Logs table ────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                    id SERIAL PRIMARY KEY,
+                    admin_id BIGINT NOT NULL,
+                    action TEXT NOT NULL,
+                    details TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            # ─── Settings table ──────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                );
             """)
 
         conn.commit()
+    print("✅ Database schema checked/updated")
+
+
         
 def get_all_players():
     with get_connection() as conn:
@@ -144,12 +187,12 @@ def get_order_history_by_discord_id(discord_id):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT i.name, o.quantity, o.created_at
+                SELECT i.name, o.quantity, o.timestamp
                 FROM orders o
                 JOIN players p ON o.player_id = p.id
                 JOIN shop_items i ON o.item_id = i.id
                 WHERE p.discord_id = %s
-                ORDER BY o.created_at DESC
+                ORDER BY o.timestamp DESC
                 LIMIT 10
             """, (discord_id,))
             return [
@@ -319,11 +362,26 @@ def get_orders_by_player(discord_id):
 def save_order_to_db(player_id, item_id, quantity):
     with get_connection() as conn:
         with conn.cursor() as cur:
+            # Get price from the shop_items table
+            cur.execute("SELECT price FROM shop_items WHERE id = %s", (item_id,))
+            result = cur.fetchone()
+            if not result:
+                raise ValueError("Item not found")
+            price = result[0]
+
+            # Calculate total
+            total_price = price * quantity
+
             cur.execute("""
-                INSERT INTO orders (player_id, item_id, quantity)
-                VALUES (%s, %s, %s)
-            """, (player_id, item_id, quantity))
-            conn.commit()
+                INSERT INTO orders (player_id, item_id, quantity, total_price)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+            """, (player_id, item_id, quantity, total_price))
+            order_id = cur.fetchone()[0]
+
+        conn.commit()
+        return order_id
+
 
 # Save message/channel ID to a shop item
 def update_shop_item_message_info(item_id, message_id, channel_id):

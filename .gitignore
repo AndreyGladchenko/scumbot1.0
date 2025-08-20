@@ -1,8 +1,11 @@
 # Python
 *.pyc
 __pycache__/
+*.pyo
+*.pyd
+*.sqlite3
 
-# Environment files
+# Environment files (keep secrets safe!)
 .env
 .env.local
 .env.*.local
@@ -12,6 +15,9 @@ __pycache__/
 *.log
 docker-compose.override.yml
 postgres-data/
+db_data/
+**/db_data/
+**/postgres-data/
 
 # Virtual environments
 .venv/
@@ -20,6 +26,14 @@ venv/
 
 # VS Code
 .vscode/
+
+# Flask & cache
+instance/
+*.db
+*.sqlite
+
+# Migrations (if you use flask-migrate/alembic, uncomment)
+#migrations/
 
 # Mac and Linux cruft
 .DS_Store

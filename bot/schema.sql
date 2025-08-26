@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS orders (
     item_id INT NOT NULL REFERENCES shop_items(id) ON DELETE CASCADE,
     quantity INT NOT NULL DEFAULT 1,
     total_price NUMERIC(10, 2) NOT NULL DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status TEXT DEFAULT 'pending'   -- ✅ new column
 );
 
 -- Auto calculate total_price when inserting orders (if not supplied)

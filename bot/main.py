@@ -30,6 +30,7 @@ GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))
 BANK_CHANNEL_ID = int(os.getenv("BANK_CHANNEL_ID"))
 BOT_STATUS_CHANNEL_ID = int(os.getenv("BOT_STATUS_CHANNEL_ID"))
 last_status_message_id = None  # store the message ID so we can edit it later
+TAXI_CHANNEL_ID = int(os.getenv("TAXI_CHANNEL_ID", 0))  # taxi posting channel (e.g., 1408626703206580246)
 
 # ─── GLOBALS ─────────────────────────────────────────────────
 cooldowns = {}
@@ -94,6 +95,7 @@ class ScumBot(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.bot.tree.add_command(self.send_bank_buttons, guild=discord.Object(id=GUILD_ID)) # Register bank buttons command for the specific guild
+        self.bot.tree.add_command(self.send_taxis, guild=discord.Object(id=GUILD_ID)) # Register taxi command for the specific guild
 
     async def log_command(self, interaction, message):
         if LOG_CHANNEL_ID:
@@ -276,6 +278,126 @@ class ScumBot(commands.Cog):
             await interaction.response.send_message("✅ Posted bank buttons.", ephemeral=True)
         print("✅ Sent bank message")
 
+        # ─── TAXI: post a single taxi to the taxi channel ───────
+    async def post_taxi(self, taxi):
+        if not TAXI_CHANNEL_ID:
+            print("❌ TAXI_CHANNEL_ID not set")
+            return
+        channel = self.bot.get_channel(TAXI_CHANNEL_ID)
+        if not channel:
+            print("❌ Taxi channel not found")
+            return
+
+        price_display = format_price(taxi["price"])
+        # coordinates is JSONB in DB; we just show a count to avoid clutter
+        coords = taxi.get("coordinates")
+        try:
+            if isinstance(coords, str):
+                coords = json.loads(coords)
+        except Exception:
+            pass
+        coord_count = len(coords) if isinstance(coords, list) else 0
+
+        embed = discord.Embed(
+            title=f"🚖 {taxi['name']}",
+            description=f"Price: **{price_display}** credits\nSpawn spots: **{coord_count}**",
+            color=discord.Color.blurple()
+        )
+        view = TaxiView(self.bot, taxi["id"], taxi["name"], int(float(taxi["price"])))
+        await channel.send(embed=embed, view=view)
+
+    # ─── TAXI: admin command to (re)post all taxis ──────────
+    @app_commands.command(name="send_taxis", description="Post all taxis to the taxi channel (admin only)")
+    async def send_taxis(self, interaction: Interaction):
+        if not await self.is_admin(interaction):
+            await interaction.response.send_message("❌ No permission.", ephemeral=True)
+            return
+
+        if not TAXI_CHANNEL_ID:
+            await interaction.response.send_message("❌ TAXI_CHANNEL_ID not set in .env", ephemeral=True)
+            return
+
+        # Fetch all taxis
+        with db.get_connection() as conn:
+            taxis = db.get_all_taxis(conn)
+
+        if not taxis:
+            await interaction.response.send_message("ℹ️ No taxis found to post.", ephemeral=True)
+            return
+
+        posted = 0
+        for taxi in taxis:
+            await self.post_taxi(taxi)
+            posted += 1
+
+        await interaction.response.send_message(f"✅ Posted {posted} taxi(s).", ephemeral=True)
+
+
+    # ─── TAXI: button handler (deduct & create taxi order) ──
+    async def order_taxi_from_button(self, interaction: discord.Interaction, taxi_id: int, taxi_name: str, price: int):
+        # Ensure player exists
+        player_id = db.get_or_create_player(interaction.user.id, "", interaction.user.name)
+
+        # Check taxi still exists & get latest price (server-of-record)
+        with db.get_connection() as conn:
+            taxi = db.get_taxi_by_id(conn, taxi_id)
+        if not taxi:
+            await interaction.response.send_message("❌ Taxi no longer available.", ephemeral=True)
+            return
+
+        real_price = int(float(taxi["price"]))
+        balance = db.get_balance(player_id)
+        if balance < real_price:
+            await interaction.response.send_message(
+                f"❌ Not enough funds. Cost: {format_price(real_price)}, Balance: {format_price(balance)}",
+                ephemeral=True
+            )
+            return
+
+        # Deduct credits first (keeps pattern with your shop flow)
+        db.update_balance(player_id, -real_price)
+
+        # Create taxi order in DB
+        with db.get_connection() as conn:
+            db.create_taxi_order(conn, player_id, taxi_id)
+            conn.commit()
+
+        # Log to your delivery/admin channel (reuse PURCHASE_LOG_CHANNEL_ID if you like)
+        delivery_channel = self.bot.get_channel(PURCHASE_LOG_CHANNEL_ID)
+        if delivery_channel:
+            await delivery_channel.send(
+                f"🚕 **Taxi Ordered** — {interaction.user.display_name} → **{taxi['name']}** "
+                f"for {format_price(real_price)} credits"
+            )
+
+        await interaction.response.send_message(
+            f"✅ Taxi **{taxi_name}** ordered for {format_price(real_price)} credits! You’ll be teleported shortly.",
+            ephemeral=True
+        )
+
+# ─── TAXI ORDER VIEW ────────────────────────────────────────
+class TaxiView(View):
+    def __init__(self, bot, taxi_id, taxi_name, price):
+        super().__init__(timeout=None)
+        self.add_item(OrderTaxiButton(bot, taxi_id, taxi_name, price))
+
+class OrderTaxiButton(Button):
+    def __init__(self, bot, taxi_id, taxi_name, price):
+        super().__init__(
+            label=f"🚖 Order {taxi_name}",
+            style=ButtonStyle.blurple,
+            custom_id=f"order_taxi:{taxi_id}"
+        )
+        self.bot = bot
+        self.taxi_id = taxi_id
+        self.taxi_name = taxi_name
+        self.price = int(float(price))
+
+    async def callback(self, interaction: Interaction):
+        cog = self.bot.get_cog("ScumBot")
+        if cog:
+            await cog.order_taxi_from_button(interaction, self.taxi_id, self.taxi_name, self.price)
+
 
 # ─── FLASK APP (Internal API for Admin Portal) ──────────────
 flask_app = Flask(__name__)
@@ -289,6 +411,37 @@ def api_post_item():
     print("📨 Received /api/post_item:", data)
     bot.loop.create_task(bot.get_cog("ScumBot").post_shop_item(data))
     return jsonify({"status": "posted"}), 200
+
+@flask_app.route("/api/repost_taxis", methods=["POST"])
+def api_repost_taxis():
+    scum_cog = bot.get_cog("ScumBot")
+    if not scum_cog:
+        return jsonify({"error": "ScumBot not ready"}), 500
+
+    async def do_repost():
+        channel_id = int(os.getenv("TAXI_CHANNEL_ID", "1408626703206580246"))
+        channel = bot.get_channel(channel_id)
+        if not channel:
+            print("❌ Taxi channel not found.")
+            return
+
+        # Purge existing (non-pinned) messages in taxi channel
+        def check(msg): return not msg.pinned
+        await channel.purge(limit=None, check=check)
+
+        # Get taxis from DB
+        with db.get_connection() as conn:
+            taxis = db.get_all_taxis(conn)
+
+        # Post each taxi (reuse same logic from your /send_taxis command)
+        for taxi in taxis:
+            await scum_cog.post_taxi_item(channel, taxi)
+
+        print("✅ Reposted taxis to Discord.")
+
+    bot.loop.create_task(do_repost())
+    return jsonify({"status": "reposted"}), 200
+
 
 def run_flask():
     print("🌐 Starting internal Flask API on port 3000")
@@ -357,6 +510,16 @@ async def on_ready():
             await purge_without_pins(bank_channel)
             await bank_channel.send("🏦 **Bank Actions:**", view=BankView(bot))
             print("✅ Bank buttons refreshed")
+        # inside: if auto_refresh: ...
+        taxi_channel = bot.get_channel(TAXI_CHANNEL_ID)
+        if taxi_channel and TAXI_CHANNEL_ID:
+            await purge_without_pins(taxi_channel)
+            scum_cog = bot.get_cog("ScumBot")
+            with db.get_connection() as conn:
+                taxis = db.get_all_taxis(conn)
+            for taxi in taxis:
+                await scum_cog.post_taxi(taxi)
+            print("✅ Taxis refreshed")
 
     # Start Flask in background
     threading.Thread(target=run_flask, daemon=True).start()

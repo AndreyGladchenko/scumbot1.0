@@ -253,10 +253,130 @@ def force_delete_player(discord_id):
     db.remove_player(discord_id)
     return redirect(url_for('players'))
 
+@app.route('/orders/<int:order_id>/status', methods=['POST'])
+def update_order_status_route(order_id):
+    new_status = request.form.get("status")
+    if new_status:
+        db.update_order_status(order_id, new_status)
+        flash(f"Order {order_id} marked as {new_status}", "success")
+    return redirect(request.referrer or url_for("players"))
+
+# ─────────────────────────────────────────────────────────────
+# 🚖 Taxis (Admin)
+# ─────────────────────────────────────────────────────────────
+
+from psycopg2.extras import RealDictCursor
+
+@app.route('/taxis')
+def taxis():
+    with db.get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM taxis ORDER BY id;")
+            taxis = cur.fetchall()
+    return render_template('taxis.html', taxis=taxis)
+
+@app.route('/taxis/create', methods=['GET', 'POST'])
+def taxis_create():
+    if request.method == 'POST':
+        name = request.form['name'].strip()
+        price = int(float(request.form['price']))
+        # one coord per line; accepts "X=.. Y=.. Z=.." or "x y z"
+        raw = request.form.get('coordinates','').strip().splitlines()
+        coords = []
+        for line in raw:
+            s = line.strip()
+            if not s: 
+                continue
+            if "=" in s:
+                coords.append(s)
+            else:
+                parts = [p for p in s.replace(",", " ").split() if p]
+                if len(parts) != 3:
+                    flash(f"Bad coord line: {s}", "error")
+                    return redirect(request.url)
+                coords.append(f"X={parts[0]} Y={parts[1]} Z={parts[2]}")
+
+        with db.get_connection() as conn:
+            taxi_id = db.create_taxi(conn, name, price, coords)
+            conn.commit()
+
+        flash(f"✅ Taxi '{name}' created (id {taxi_id})", "success")
+        return redirect(url_for('taxis'))
+
+    return render_template('taxis_create.html')
+
+@app.route('/taxis/edit/<int:taxi_id>', methods=['GET', 'POST'])
+def taxis_edit(taxi_id):
+    # fetch current taxi
+    with db.get_connection() as conn:
+        taxi = db.get_taxi_by_id(conn, taxi_id)
+    if not taxi:
+        flash("❌ Taxi not found.", "error")
+        return redirect(url_for('taxis'))
+
+    if request.method == 'POST':
+        name = request.form['name'].strip()
+        price = int(float(request.form['price']))
+        raw = request.form.get('coordinates', '').strip().splitlines()
+
+        coords = []
+        for line in raw:
+            s = line.strip()
+            if not s:
+                continue
+            if "=" in s:
+                coords.append(s)
+            else:
+                parts = [p for p in s.replace(",", " ").split() if p]
+                if len(parts) != 3:
+                    flash(f"❌ Bad coord line: {s}", "error")
+                    return redirect(request.url)
+                coords.append(f"X={parts[0]} Y={parts[1]} Z={parts[2]}")
+
+        with db.get_connection() as conn:
+            db.update_taxi(conn, taxi_id, name, price, coords)
+            conn.commit()
+
+        flash("✅ Taxi updated.", "success")
+        return redirect(url_for('taxis'))
+
+    # GET -> show form with existing values
+    # ensure coordinates render as newline-separated strings
+    coords_list = taxi.get("coordinates") or []
+    if isinstance(coords_list, str):
+        try:
+            coords_list = json.loads(coords_list)
+        except Exception:
+            coords_list = [coords_list]
+    coords_text = "\n".join(coords_list)
+
+    return render_template('taxis_edit.html', taxi=taxi, coords_text=coords_text)
+
+@app.route('/taxis/<int:taxi_id>/delete', methods=['POST'])
+def taxis_delete(taxi_id):
+    with db.get_connection() as conn:
+        db.delete_taxi(conn, taxi_id)
+        conn.commit()
+    flash("Taxi deleted", "success")
+    return redirect(url_for('taxis'))
+
+def _print_routes_once():
+    try:
+        with app.app_context():
+            print("🌐 Registered routes:")
+            for r in app.url_map.iter_rules():
+                methods = ",".join(sorted(r.methods - {"HEAD", "OPTIONS"}))
+                print(f"  {r.rule:30s} -> {methods}")
+    except Exception as e:
+        print("Failed to print routes:", e)
+
+
 
 # ─────────────────────────────────────────────────────────────
 # ✅ Flask entry point
 # ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    _print_routes_once()
     app.run(host="0.0.0.0", port=5000, debug=True)
+

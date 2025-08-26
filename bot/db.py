@@ -27,7 +27,6 @@ def init():
                     balance INTEGER DEFAULT 0
                 );
             """)
-            # Extra columns
             cur.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS discord_username TEXT;")
 
             # ─── Shop Items table ────────────────────────────
@@ -53,8 +52,13 @@ def init():
                     item_id INTEGER NOT NULL REFERENCES shop_items(id) ON DELETE CASCADE,
                     quantity INTEGER NOT NULL DEFAULT 1,
                     total_price NUMERIC NOT NULL,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT DEFAULT 'pending'
                 );
+            """)
+            cur.execute("""
+                ALTER TABLE orders
+                ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending'
             """)
 
             # ─── Audit Logs table ────────────────────────────
@@ -76,8 +80,37 @@ def init():
                 );
             """)
 
+            # ─── Taxis table ─────────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS taxis (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    price NUMERIC(10,2) NOT NULL,
+                    coordinates JSONB NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            # ─── Taxi Orders table ───────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS taxi_orders (
+                    id SERIAL PRIMARY KEY,
+                    player_id INT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+                    taxi_id INT NOT NULL REFERENCES taxis(id) ON DELETE CASCADE,
+                    chosen_coordinate TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TIMESTAMP
+                );
+            """)
+
+            # ─── Helpful indexes ─────────────────────────────
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_taxi_orders_player_id ON taxi_orders(player_id);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_taxi_orders_taxi_id ON taxi_orders(taxi_id);")
+
         conn.commit()
-    print("✅ Database schema checked/updated")
+    print("✅ Database schema checked/updated (players, shop, orders, taxis)")
+
 
 
         
@@ -339,7 +372,7 @@ def get_orders_by_player(discord_id):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT o.id, si.name, si.category, si.price, o.quantity, o.timestamp, p.discord_username
+                SELECT o.id, si.name, si.category, si.price, o.quantity, o.timestamp, p.discord_username, o.status
                 FROM orders o
                 JOIN players p ON o.player_id = p.id
                 JOIN shop_items si ON o.item_id = si.id
@@ -355,6 +388,7 @@ def get_orders_by_player(discord_id):
                     "quantity": row[4],
                     "timestamp": row[5],
                     "discord_username": row[6],
+                    "status": row[7],   # ✅ new field
                 }
                 for row in cur.fetchall()
             ]
@@ -373,14 +407,20 @@ def save_order_to_db(player_id, item_id, quantity):
             total_price = price * quantity
 
             cur.execute("""
-                INSERT INTO orders (player_id, item_id, quantity, total_price)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO orders (player_id, item_id, quantity, total_price, status)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING id
-            """, (player_id, item_id, quantity, total_price))
+            """, (player_id, item_id, quantity, total_price, "pending"))
             order_id = cur.fetchone()[0]
 
         conn.commit()
         return order_id
+
+def update_order_status(order_id, new_status):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE orders SET status = %s WHERE id = %s", (new_status, order_id))
+            conn.commit()
 
 
 # Save message/channel ID to a shop item
@@ -417,3 +457,83 @@ def get_shop_item_with_message(item_id):
                     "channel_id": row[8]
                 }
             return None
+# ===============================
+# Taxi System Database Functions
+# ===============================
+import json
+from psycopg2.extras import RealDictCursor
+
+def get_all_taxis(conn):
+    """Fetch all taxis."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM taxis ORDER BY id;")
+        return cur.fetchall()
+
+def get_taxi_by_id(conn, taxi_id):
+    """Fetch a taxi by ID."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM taxis WHERE id=%s;", (taxi_id,))
+        return cur.fetchone()
+
+def create_taxi(conn, name, price, coordinates):
+    """
+    Create a new taxi.
+    coordinates must be a list of coordinate strings.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO taxis (name, price, coordinates) VALUES (%s, %s, %s) RETURNING id;",
+            (name, price, json.dumps(coordinates))
+        )
+        return cur.fetchone()[0]
+
+def update_taxi(conn, taxi_id, name, price, coordinates):
+    """Update a taxi's name, price and coordinates (list of strings)."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE taxis
+               SET name = %s,
+                   price = %s,
+                   coordinates = %s
+             WHERE id = %s
+        """, (name, price, json.dumps(coordinates), taxi_id))
+
+def delete_taxi(conn, taxi_id):
+    """Delete a taxi."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM taxis WHERE id=%s;", (taxi_id,))
+
+def create_taxi_order(conn, player_id, taxi_id, chosen_coordinate=None):
+    """Create a taxi order for a player."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO taxi_orders (player_id, taxi_id, chosen_coordinate) VALUES (%s, %s, %s) RETURNING id;",
+            (player_id, taxi_id, chosen_coordinate)
+        )
+        return cur.fetchone()[0]
+
+def fetch_pending_taxi_orders(conn):
+    """Fetch all pending taxi orders with taxi details."""
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            SELECT o.*, 
+                   t.name AS taxi_name, 
+                   t.price AS taxi_price,
+                   t.coordinates,
+                   p.scum_username AS player_name,
+                   p.discord_id AS player_discord_id
+            FROM taxi_orders o
+            JOIN taxis t ON o.taxi_id = t.id
+            JOIN players p ON o.player_id = p.id
+            WHERE o.status = 'pending'
+            ORDER BY o.created_at ASC;
+        """)
+        return cur.fetchall()
+
+def mark_taxi_order_status(conn, order_id, status):
+    """Update taxi order status (completed/failed)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE taxi_orders SET status=%s, completed_at=NOW() WHERE id=%s;",
+            (status, order_id)
+        )

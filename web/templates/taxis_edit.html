@@ -1,0 +1,26 @@
+{% extends "layout.html" %}
+{% block title %}Edit Taxi - SCUM Admin{% endblock %}
+{% block header %}🚖 Edit Taxi{% endblock %}
+
+{% block content %}
+<form method="post">
+  <div class="form-group">
+    <label>Taxi Name</label>
+    <input type="text" name="name" value="{{ taxi.name }}" required>
+  </div>
+
+  <div class="form-group">
+    <label>Price (credits)</label>
+    <input type="number" name="price" min="0" value="{{ taxi.price|int if taxi.price is not none else 0 }}" required>
+  </div>
+
+  <div class="form-group">
+    <label>Coordinates (one per line)</label>
+    <textarea name="coordinates" rows="8" required>{{ coords_text }}</textarea>
+    <small>Supports “X=.. Y=.. Z=..” or “x y z”.</small>
+  </div>
+
+  <button class="btn">Save</button>
+  <a class="btn btn-secondary" href="{{ url_for('taxis') }}">Cancel</a>
+</form>
+{% endblock %}

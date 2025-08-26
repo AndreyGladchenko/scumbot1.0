@@ -1,15 +1,18 @@
 # 🛒 SCUM Discord Bot Shop System
 
-A full-stack, self-hosted shop system for SCUM game servers. Players buy items via Discord using buttons or slash commands. Admins manage everything via a web portal.
+A full-stack, self-hosted shop system for SCUM game servers. Players buy items via Discord using buttons or slash commands. Admins manage everything via a web portal. Includes full **delivery automation** and **taxi support**.
 
 ---
 
 ## ✨ Features
 
 - 🛒 Buy items via Discord (slash commands + buttons)
+- 🚖 **Taxi booking system** – players can order taxis in-game via Discord
+- 🤖 **Delivery bot automation** – spawns purchased items & taxis in-game (Windows PC)
 - 🔐 Admin-only web interface
 - 💾 PostgreSQL database
 - 📦 JSON import/export of shop items
+- ♻️ Auto-refresh shop, bank & taxis on bot startup
 - 🚀 Fully Dockerized (easy to deploy)
 
 ---
@@ -51,41 +54,69 @@ docker compose up -d --build
 
 > Use `.env.example` as your template.
 
-```env
-# Discord bot token (keep secret!)
-DISCORD_TOKEN=
+#####################################
+# ⚙️  Discord Bot Configuration
+#####################################
 
-# PostgreSQL settings
-POSTGRES_HOST=db
-POSTGRES_PORT=5432
-POSTGRES_DB=
-POSTGRES_USER=
-POSTGRES_PASSWORD=
+DISCORD_TOKEN=your_discord_bot_token_here     # 🔐 Your bot token from the Discord developer portal
+DISCORD_GUILD_ID=your_guild_id_here           # 🏠 ID of the Discord server where the bot operates
+ADMIN_ROLE_NAME=Admin                         # 👑 Role name with admin permissions (case-sensitive)
 
-# Optional: full database URL (used by Flask)
-DATABASE_URL=
+#####################################
+# 🛠️  Channel Configuration (Discord)
+#####################################
 
-# Discord guild (server) ID
-DISCORD_GUILD_ID=
+LOG_CHANNEL_ID=                                # 📜 Channel ID where admin command logs are posted (e.g. bot-shop-admin)
+SHOP_LOG_CHANNEL_ID=                           # 🛒 Channel ID where shop items are posted (e.g. bot-shop)
+PURCHASE_LOG_CHANNEL_ID=                       # 📦 Channel ID where purchases are logged (e.g. bot-shop-delivery)
+BANK_CHANNEL_ID=                                # 🏦 Channel ID for bank actions
+TAXI_CHANNEL_ID=                                # 🚖 Channel ID where taxi order buttons will be posted
+BOT_STATUS_CHANNEL_ID=                          # 📡 Bot status updates channel
 
-# Channel IDs (from your Discord server)
-LOG_CHANNEL_ID=                 # Admin log channel (e.g. bot-shop-admin)
-SHOP_LOG_CHANNEL_ID=           # Where shop items with buttons are posted
-PURCHASE_LOG_CHANNEL_ID=       # Where purchases are logged
+DISCORD_WEBHOOK_URL=                            # 🌐 Optional webhook URL if used for posting shop items (leave blank if using bot instead)
 
-# Webhook (optional - used for posting embeds via webhook, not bot)
-DISCORD_WEBHOOK_URL=
+#####################################
+# 🐘 PostgreSQL Database Configuration
+#####################################
 
-# Where spawn commands are stored (future automation)
-COMMAND_RELAY_FILE=/app/outgoing_commands.txt
+POSTGRES_HOST=db                               # Hostname of the PostgreSQL container (usually "db" in Docker)
+POSTGRES_PORT=5432                             # Port PostgreSQL listens on (default: 5432)
+POSTGRES_DB=scumshop                           # Database name
+POSTGRES_USER=scumuser                         # Database user
+POSTGRES_PASSWORD=your_postgres_password       # Database password
+DATABASE_URL=postgresql://scumuser:password@db:5432/scumshop   # Optional full connection string (overrides above if set)
 
-# Admin-only role name for slash command protection
-ADMIN_ROLE_NAME=Admin
+#####################################
+# 🔐 Flask & Internal API
+#####################################
 
-# Flask API
-FLASK_SECRET_KEY=randomstring
-BOT_API_URL=http://discord-bot:3000
-```
+FLASK_SECRET_KEY=your_flask_secret_key_here    # 🔐 Secret key for Flask session security
+BOT_API_URL=http://discord-bot:3000/api/post_item       # 🔁 Internal API for posting shop items
+BOT_API_URL_REPOST_TAXIS=http://discord-bot:3000/api/repost_taxis  # 🔁 Internal API for refreshing taxi posts
+
+#####################################
+# 📄 Other Bot Settings
+#####################################
+
+COMMAND_RELAY_FILE=/app/outgoing_commands.txt  # 📝 File where spawn commands are queued (if not sent to Discord)
+AUTO_REFRESH_ON_STARTUP=true                   # ♻️ If true, clears & repopulates shop/bank/taxi channels on bot startup
+
+#####################################
+# 💻 Delivery Bot (Windows PC)
+#####################################
+
+# Connection to main DB for reading orders & taxis
+DATABASE_URL=postgresql://scumuser:password@HOST_IP:5432/scumshop
+
+# Steam & SCUM game config
+STEAM_PATH=C:\Program Files (x86)\Steam\steam.exe
+SCUM_APP_ID=513710                              # Steam app ID for SCUM
+GAME_CLIENT_PATH=                               # Optional direct path to SCUM.exe
+
+# Drone settings for delivery bot
+STAGING_COORDS=X=0 Y=0 Z=0                      # Safe staging coordinates for drone to return to
+SCREEN_WIDTH=1280                               # Width to resize SCUM window to
+SCREEN_HEIGHT=720                               # Height to resize SCUM window to
 
 ---
 
@@ -93,36 +124,63 @@ BOT_API_URL=http://discord-bot:3000
 
 Use inside your Discord server:
 
-- `/register <scum_username>` – Link your Discord to your SCUM name  
-- `/buy <item_name> [quantity]` – Buy an item  
-- `/send_shop_items` – Admin only: Post all shop items with buttons
+/register <scum_username> – Link your Discord to your SCUM name
 
+/buy <item_name> [quantity] – Buy an item
+
+/send_shop_items – Admin only: Post all shop items with buttons
+
+/send_taxis – Admin only: Post all taxis with order buttons
 ---
 
-## 🛍 Buy Buttons
+## 🛍 Buy & Taxi Buttons
 
-When shop items are posted, a "🛒 Buy" button appears.
+Buy buttons appear for each shop item posted
 
-- Clicking it:
-  - Checks user balance
-  - Deducts cost
-  - Logs order
-  - Sends spawn commands to delivery channel
+Taxi buttons appear for each taxi route posted
 
+Clicking:
+
+      Checks user balance
+
+      Deducts cost
+
+      Logs order
+
+      Sends to delivery bot for in-game execution
 ---
 
 ## 🛠 Admin Panel
 
-Open your browser to: [http://localhost:5000](http://localhost:5000)
+Open your browser to: http://localhost:5000
 
-From there you can:
+Manage:
 
-- ✅ Add/edit/delete shop items  
-- 👤 Manage players  
-- 📜 View order history  
-- 📥 Import/export JSON  
-- 📬 Trigger posting items to Discord
+✅ Add/edit/delete shop items
 
+🚖 Add/edit/delete taxis (with coordinates)
+
+👤 Manage players
+
+📜 View order history
+
+📥 Import/export JSON
+
+📬 Trigger posting shop items & taxis to Discord
+
+🤖 Delivery Bot (Windows)
+
+Runs on a separate PC with SCUM installed
+
+Uses Steam to launch SCUM and automates admin drone mode
+
+Picks up pending orders (items & taxis) and fulfills them automatically
+
+Requires .env configuration with:
+
+          DATABASE_URL pointing to your main DB
+
+          STEAM_PATH, SCUM_APP_ID, and STAGING_COORDS
 ---
 
 ## 🐘 PostgreSQL
@@ -208,6 +266,22 @@ Made with ☕ by [@NARobz](https://github.com/NARobz/scumbot1.0)
 
 
 ## New Features (Aug 2025)
+
+📜 New Features (Aug 2025)
+
+Bank UI Register Button – Register SCUM username via Discord modal
+
+Purchase History Button – View last 10 purchases in Discord
+
+Taxi Management – Add/edit/delete taxis via admin panel
+
+Taxi Buttons in Discord – Players can order taxis directly
+
+Delivery Bot Integration – Fulfills both item and taxi orders automatically
+
+Bot Status Updates – Updates a single status message instead of spamming
+
+Auto-Refresh Channels – Shop, bank, and taxi channels cleaned & repopulated on startup
 
 - **Register Button in Bank UI**  
   Players can now link their SCUM in-game name with their Discord account directly from the bank channel using a button.  

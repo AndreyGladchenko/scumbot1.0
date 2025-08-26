@@ -1,0 +1,27 @@
+{% extends "layout.html" %}
+{% block title %}Add Taxi - SCUM Admin{% endblock %}
+{% block header %}🚖 Add Taxi{% endblock %}
+
+{% block content %}
+<form method="post">
+  <div class="form-group">
+    <label>Taxi Name</label>
+    <input type="text" name="name" required>
+  </div>
+
+  <div class="form-group">
+    <label>Price (credits)</label>
+    <input type="number" name="price" min="0" required>
+  </div>
+
+  <div class="form-group">
+    <label>Coordinates (one per line)</label>
+    <textarea name="coordinates" rows="6" placeholder="X=123 Y=456 Z=789
+123 456 789" required></textarea>
+    <small>Supports “X=.. Y=.. Z=..” or “x y z”.</small>
+  </div>
+
+  <button type="submit" class="btn">Save</button>
+  <a href="{{ url_for('taxis') }}" class="btn btn-secondary">Cancel</a>
+</form>
+{% endblock %}

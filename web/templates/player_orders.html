@@ -10,6 +10,7 @@
     <th>Price</th>
     <th>Quantity</th>
     <th>Ordered At</th>
+    <th>Status</th>
   </tr>
   {% for order in orders %}
   <tr>
@@ -18,6 +19,24 @@
     <td>{{ order.price }}</td>
     <td>{{ order.quantity }}</td>
     <td>{{ order.timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
+    <td>
+      {% if order.status == "pending" %}
+        <span style="color: orange;">⏳ Pending</span>
+      {% elif order.status == "delivered" %}
+        <span style="color: green;">✅ Delivered</span>
+      {% else %}
+        <span style="color: gray;">{{ order.status }}</span>
+      {% endif %}
+    </td>
+    <td>
+      {% if order.status != "delivered" %}
+      <form action="{{ url_for('update_order_status_route', order_id=order.order_id) }}" method="POST" style="display:inline;">
+        <input type="hidden" name="status" value="delivered">
+        <button type="submit" class="btn">✔️ Mark Delivered</button>
+      </form>
+      {% endif %}
+    </td>
+
   </tr>
   {% endfor %}
 </table>

@@ -1,0 +1,56 @@
+{% extends "layout.html" %}
+{% block title %}Taxis - SCUM Admin{% endblock %}
+{% block header %}🚖 Taxis{% endblock %}
+
+{% block content %}
+<p>
+  <a class="btn" href="{{ url_for('taxis_create') }}">+ Add Taxi</a>
+</p>
+
+<table class="styled-table">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Name</th>
+      <th>Price</th>
+      <th>Coordinates</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in taxis %}
+    <tr>
+      <td>{{ t.id }}</td>
+      <td>{{ t.name }}</td>
+      <td>{{ (t.price|int) if t.price is not none else '' }}</td>
+      <td>
+        {# coordinates is JSONB (list). Show count; expand to preview a few lines if desired #}
+        {% set n = t.coordinates|length if t.coordinates else 0 %}
+        {{ n }}
+        {% if n > 0 %}
+          <details style="margin-top:4px;">
+            <summary>preview</summary>
+            <pre style="white-space:pre-wrap; margin:6px 0;">
+{{ (t.coordinates[:5] | join('\n')) }}
+            </pre>
+          </details>
+        {% endif %}
+      </td>
+      <td>
+        <a class="btn" href="{{ url_for('taxis_edit', taxi_id=t.id) }}">Edit</a>
+        <form method="post"
+              action="{{ url_for('taxis_delete', taxi_id=t.id) }}"
+              onsubmit="return confirm('Delete taxi {{ t.name }}?')"
+              style="display:inline-block; margin-left:6px;">
+          <button class="btn btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr>
+      <td colspan="5"><em>No taxis added yet</em></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
